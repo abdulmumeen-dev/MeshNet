@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: meshnet
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secrets
+              key: admin-password
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-clock-panel,grafana-simple-json-datasource"
+        volumeMounts:
+        - name: grafana-data
+          mountPath: /var/lib/grafana
+        - name: grafana-dashboards
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: grafana-data
+        persistentVolumeClaim:
+          claimName: grafana-data-pvc
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+      - name: grafana-datasources
+        configMap:
+          name: grafana-datasources
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: meshnet
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3000
+    targetPort: 3000
+  selector:
+    app: grafana
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: meshnet
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus:9090
+      isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: meshnet
+data:
+  meshnet-dashboard.json: |
+    {
+      "title": "MeshNet Ultra Dashboard",
+      "panels": [
+        {
+          "title": "Active Nodes",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "count(meshnet_nodes_total)"
+            }
+          ]
+        },
+        {
+          "title": "Total Bandwidth",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(meshnet_bandwidth_mbps)"
+            }
+          ]
+        },
+        {
+          "title": "Network Health",
+          "type": "gauge",
+          "targets": [
+            {
+              "expr": "meshnet_health_score * 100"
+            }
+          ]
+        },
+        {
+          "title": "Latency (ms)",
+          "type": "graph",
+          "targets": [
+            {
+              "expr": "meshnet_latency_seconds * 1000"
+            }
+          ]
+        }
+      ]
+    }
