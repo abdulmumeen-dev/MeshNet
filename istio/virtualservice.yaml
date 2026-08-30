@@ -1,0 +1,177 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: meshnet-ultra-vs
+  namespace: meshnet
+spec:
+  hosts:
+  - meshnet-ultra.meshnet.svc.cluster.local
+  gateways:
+  - meshnet-ultra-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /api/v1/
+    route:
+    - destination:
+        host: meshnet-api-gateway
+        port:
+          number: 5000
+      weight: 100
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: 5xx
+    timeout: 30s
+    corsPolicy:
+      allowOrigins:
+      - exact: '*'
+      allowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      allowHeaders:
+      - '*'
+      exposeHeaders:
+      - Content-Length
+      maxAge: 86400
+  - match:
+    - uri:
+        prefix: /websocket/
+    route:
+    - destination:
+        host: meshnet-ultra
+        port:
+          number: 80
+      weight: 100
+    websocketUpgrade: true
+    timeout: 3600s
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: meshnet-web-dashboard
+        port:
+          number: 80
+      weight: 100
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: meshnet-ultra-dr
+  namespace: meshnet
+spec:
+  host: meshnet-ultra
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+        connectTimeout: 30s
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: "x-node-id"
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+  - name: v2
+    labels:
+      version: v2
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: meshnet-api-dr
+  namespace: meshnet
+spec:
+  host: meshnet-api-gateway
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 500
+        connectTimeout: 10s
+    loadBalancer:
+      simple: ROUND_ROBIN
+  subsets:
+  - name: stable
+    labels:
+      version: stable
+  - name: canary
+    labels:
+      version: canary
+---
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: meshnet-ultra-gateway
+  namespace: meshnet
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "meshnet.yourdomain.com"
+    - "api.meshnet.yourdomain.com"
+    - "*.meshnet.yourdomain.com"
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    hosts:
+    - "meshnet.yourdomain.com"
+    - "api.meshnet.yourdomain.com"
+    - "*.meshnet.yourdomain.com"
+    tls:
+      mode: SIMPLE
+      credentialName: meshnet-tls
+---
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: external-mesh
+  namespace: meshnet
+spec:
+  hosts:
+  - "*.global-mesh.net"
+  - "*.meshnet.global"
+  ports:
+  - number: 80
+    name: http
+    protocol: HTTP
+  - number: 443
+    name: https
+    protocol: HTTPS
+  - number: 9876
+    name: discovery
+    protocol: TCP
+  - number: 9878
+    name: gateway
+    protocol: TCP
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: meshnet-auth-policy
+  namespace: meshnet
+spec:
+  selector:
+    matchLabels:
+      app: meshnet-ultra
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["meshnet"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE"]
